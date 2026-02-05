@@ -4,7 +4,7 @@ db = SQLite3::Database.new("databas.db")
 
 
 def seed!(db)
-  puts "Using db file: db/todos.db"
+  puts "Using db file: db/databas.db"
   puts "🧹 Dropping old tables..."
   drop_tables(db)
   puts "🧱 Creating tables..."
@@ -15,21 +15,38 @@ def seed!(db)
 end
 
 def drop_tables(db)
-  db.execute('DROP TABLE IF EXISTS exempel')
+  db.execute('DROP TABLE IF EXISTS adventurename')
+  db.execute('DROP TABLE IF EXISTS user')
+  db.execute('DROP TABLE IF EXISTS arooms')
+  db.execute('DROP TABLE IF EXISTS actions')
 end
 
+
 def create_tables(db)
-  db.execute('CREATE TABLE exempel (
+  db.execute('CREATE TABLE adventurename (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              pic_link TEXT,
+              name TEXT NOT NULL, 
+              description TEXT)')
+  db.execute('CREATE TABLE user (
               id INTEGER PRIMARY KEY AUTOINCREMENT,
               name TEXT NOT NULL, 
-              description TEXT,
-              state BOOLEAN)')
+              pwd_digest TEXT NOT NULL)')
+  db.execute('CREATE TABLE arooms (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              name TEXT NOT NULL, 
+              description TEXT)')
+  db.execute('CREATE TABLE actions (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              name TEXT NOT NULL, 
+              description TEXT)')
+  
 end
 
 def populate_tables(db)
-  db.execute('INSERT INTO exempel (name, description, state) VALUES ("Köp mjölk", "3 liter mellanmjölk, eko",false)')
-  db.execute('INSERT INTO exempel (name, description, state) VALUES ("Köp julgran", "En rödgran",false)')
-  db.execute('INSERT INTO exempel (name, description, state) VALUES ("Pynta gran", "Glöm inte lamporna i granen och tomten",false)')
+  db.execute('INSERT INTO adventurename (name, description) VALUES ("Äventyr 1", "jsdfjnkvcxbjifvbnjkvcxjb")')
+  db.execute('INSERT INTO adventurename (name, description) VALUES ("Äventyr 2", "EFDVÖKOJVCDHPJFVDHJKDCVNJK")')
+  db.execute('INSERT INTO adventurename (name, description) VALUES ("Äventyr 3", "jixidfivnj3984ieoppdoododjvglkjcvjkcxk")')
 end
 
 
