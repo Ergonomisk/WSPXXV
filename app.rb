@@ -4,12 +4,21 @@ require 'sqlite3'
 require 'sinatra/reloader'
 require 'bcrypt'
 
-get ('/home') 
-  db=SQLite3::Database.new('db/todos.db')
+get ('/home') do
+  db=SQLite3::Database.new('db/databas.db')
   db.results_as_hash = true
-  @databastodos = db.execute("SELECT * FROM todos WHERE done = 0")
-  @databastodosdone = db.execute("SELECT * FROM todos WHERE done = 1")
-  p @databastodos
+  @databasadventurename = db.execute("SELECT * FROM adventurename")
+  p @databasadventurename
   slim(:"index")
+
+end
+
+get ('/adventure/:id') do
+  db=SQLite3::Database.new('db/databas.db')
+  db.results_as_hash = true
+  id = params[:id].to_i
+  @special_adventure = db.execute("SELECT * FROM adventurename WHERE id = ?",id).first
+  slim(:'adventure')
+  
 
 end

@@ -1,3 +1,13 @@
-form action="/new" method="post" 
-    input type="text" name="new_todo" placeholder="att göra lista" class="loda"
-    input type="text" name="description" placeholder="blah" class="loda"
+
+h1 Sök efter ett spel
+
+form action="/home" method="get"
+    input name="q" placeholder="sök på ett äventyr" type="text"
+    input type="submit" value="sök!"
+
+    h1 Spel
+- @databasadventurename.each do |adventurename|
+    h3 
+        a href="/adventure/#{adventurename["id"]}" 
+            |#{adventurename["name"]}
+    p #{adventurename["description"]}
