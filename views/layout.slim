@@ -1,13 +1,15 @@
-<!DOCTYPE html>
-html lang="en"
+doctype html
+html lang="sv"
   head
-    meta charset="UTF-8"/
-    meta name="viewport" content="width=device-width, initial-scale=1.0"/
-    link rel="stylesheet" href="/style.css?#{Time.now.to_i}"/
+    meta charset="UTF-8"
+    meta name="viewport" content="width=device-width, initial-scale=1.0"
+    link rel="stylesheet" href="/style.css?#{Time.now.to_i}"
     title Rollspelsdax
-    h1 Rollspelsdax!
-  body 
-    ==yield
-
-  footer
-    h2 fötter !
+  body
+    header
+      h1
+        a href="/home" ⚔️ Rollspelsdax
+    main
+      == yield
+    footer
+      p Rollspelsdax — ett textäventyr

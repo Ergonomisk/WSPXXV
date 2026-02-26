@@ -1,3 +1,17 @@
-- @special_adventure
-
 h1 #{@special_adventure["name"]}
+p #{@special_adventure["description"]}
+
+h2 Rum i detta äventyr
+
+- @rooms.each do |room|
+  div class="room"
+    h3 #{room["name"]}
+    p #{room["description"]}
+
+    h4 Tillgängliga handlingar:
+    ul
+      - @actions_by_room[room["id"]].each do |action|
+        li
+          form action="/action/#{action["id"]}" method="post"
+            input type="hidden" name="adventure_id" value="#{@special_adventure["id"]}"
+            input type="submit" value="#{action["name"]}"
