@@ -9,6 +9,11 @@ html lang="sv"
     header
       h1
         a href="/home" ⚔️ Rollspelsdax
+      - if session[:user_id]
+        nav
+          a href="/home" Hem
+          |  · 
+          a href="/logout" Logga ut
     main
       == yield
     footer

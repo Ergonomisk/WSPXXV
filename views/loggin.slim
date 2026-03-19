@@ -1,16 +1,26 @@
-p Logga in 
-form action="/login" method="post" 
-    input type="text" name="name" placeholder="namn"
-    input type="text" name="pwd" placeholder="lösenord"
-    input type="submit" value="logga in" 
+link rel="stylesheet" href="/style.css"
+script src="/script.js"
+
+
+p Logga in
+form action="/login" method="post"
+  input type="text" name="name" placeholder="namn"
+  div class="pwd-wrapper"
+    input#login-pwd type="password" name="pwd" placeholder="lösenord"
+    button type="button" onclick="togglePwd('login-pwd', this)" Visa
+  input type="submit" value="logga in"
 
 hr
-p ny användare 
+p Ny användare
 - if params[:error]
   p style="color: red;" = params[:error]
-form action="/user" method="post" 
-    input type="text" name="name" placeholder="namn"
-    input type="text" name="pwd" placeholder="lösenord"
-    input type="text" name="pwd_confirm" placeholder="lösenord igen"
-    input type="submit" value="skapa ny användare" 
+form action="/user" method="post"
+  input type="text" name="name" placeholder="namn"
+  div class="pwd-wrapper"
+    input#reg-pwd type="password" name="pwd" placeholder="lösenord"
+    button type="button" onclick="togglePwd('reg-pwd', this)" Visa
+  div class="pwd-wrapper"
+    input#reg-pwd2 type="password" name="pwd_confirm" placeholder="lösenord igen"
+    button type="button" onclick="togglePwd('reg-pwd2', this)" Visa
+  input type="submit" value="skapa ny användare"
 

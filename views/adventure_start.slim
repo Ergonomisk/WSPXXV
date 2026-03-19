@@ -1,0 +1,8 @@
+div class="adventure-start"
+  h1 #{@adventure['name']}
+  p class="description" #{@adventure['description']}
+
+  form action="/adventure/#{@adventure['id']}/start" method="post"
+    input type="submit" value="🗡️ Börja äventyret!" class="btn btn-start"
+
+  a href="/home" class="btn btn-back" Tillbaka till listan

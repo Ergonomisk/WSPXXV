@@ -1,17 +1,64 @@
-h1 #{@special_adventure["name"]}
-p #{@special_adventure["description"]}
+- finished = @run['finished'] == 1
 
-h2 Rum i detta äventyr
+div class="game-container"
 
-- @rooms.each do |room|
-  div class="room"
-    h3 #{room["name"]}
-    p #{room["description"]}
+  / ── Top bar ──────────────────────────────────
+  div class="top-bar"
+    span class="adventure-title" #{@adventure['name']}
+    span class="room-counter" Rum #{@room['room_order']} / #{@total_rooms}
 
-    h4 Tillgängliga handlingar:
-    ul
-      - @actions_by_room[room["id"]].each do |action|
-        li
-          form action="/action/#{action["id"]}" method="post"
-            input type="hidden" name="adventure_id" value="#{@special_adventure["id"]}"
-            input type="submit" value="#{action["name"]}"
+  / ── Last action result ───────────────────────
+  - if session[:last_result]
+    div class="result-box"
+      p #{session.delete(:last_result)}
+
+  / ── Finished banner ─────────────────────────
+  - if finished
+    div class="finished-banner"
+      h2 🏆 Du klarade äventyret!
+      form action="/adventure/#{@adventure['id']}/start" method="post"
+        input type="submit" value="Spela igen" class="btn"
+      a href="/home" class="btn btn-back" Tillbaka
+
+  / ── Active room ─────────────────────────────
+  - unless finished
+    div class="room-box"
+      h2 #{@room['name']}
+      p class="room-description" #{@room['description']}
+
+    / ── Actions ────────────────────────────────
+    div class="actions-box"
+      h3 Vad gör du?
+      - if @available_actions.empty?
+        p class="no-actions" Du kan inte göra något här just nu.
+      - @available_actions.each do |action|
+        form action="/adventure/#{@adventure['id']}/action/#{action['id']}" method="post"
+          input type="submit" value="#{action['name']}" class="btn btn-action"
+
+  / ── Inventory ───────────────────────────────
+  div class="inventory-box"
+    h3 🎒 Ryggsäck
+    - if @inventory.empty?
+      p class="empty-inv" Tom
+    - else
+      ul
+        - @inventory.each do |item|
+          li #{item_name(item)}
+
+  / ── Action log ─────────────────────────────
+  div class="log-box"
+    h3 📜 Senaste händelser
+    - if @log.empty?
+      p Inga händelser ännu.
+    - else
+      ul
+        - @log.each do |entry|
+          li
+            strong #{entry['action_name']}
+            |  — #{entry['result_text']}
+
+  / ── Restart ────────────────────────────────
+  div class="restart-bar"
+    form action="/adventure/#{@adventure['id']}/start" method="post"
+      input type="submit" value="↺ Börja om" class="btn btn-restart"
+    a href="/home" class="btn btn-back" ← Tillbaka
