@@ -1,80 +1,102 @@
+# frozen_string_literal: true
+
 require 'sinatra'
 require 'slim'
-require 'sqlite3'
 require 'sinatra/reloader'
-require 'bcrypt'
+require_relative 'model'
 
 enable :sessions
 set :session_secret, 'rollspelsdax_super_hemlig_nyckel_som_ar_tillrackligt_lang_for_rack_session_kryptering'
 
 # ────────────────────────────────────────
-# Helpers
+# Helpers (Vy-hjälpmetoder)
 # ────────────────────────────────────────
 helpers do
-  def db
-    @db ||= begin
-      database = SQLite3::Database.new('db/databas.db')
-      database.results_as_hash = true
-      database
-    end
-  end
-
+  # Kontrollerar om en användare är inloggad via sessionen.
+  #
+  # @return [Boolean] true om user_id finns i sessionen, annars false
   def logged_in?
     !session[:user_id].nil?
   end
 
+  # Kräver att användaren är inloggad, annars omdirigeras till startsidan.
+  #
+  # @return [void]
   def require_login!
     redirect '/' unless logged_in?
   end
 
+  # Hämtar den aktiva spelomgången för den inloggade spelaren och ett givet äventyr.
+  # Skapar ett sessionstoken om inget finns sedan tidigare.
+  #
+  # @param adventure_id [Integer] id för äventyret
+  # @return [Hash, nil] aktiv spelomgång som hash, eller nil om ingen pågår
   def current_run(adventure_id)
     token = session[:token] ||= SecureRandom.hex(16)
-    db.execute(
-      "SELECT * FROM player_runs WHERE session_token = ? AND adventure_id = ? AND finished = 0",
-      [token, adventure_id]
-    ).first
+    PlayerRun.find_active(token, adventure_id)
   end
 
+  # Startar en ny spelomgång för spelaren i ett givet äventyr,
+  # med start i det första rummet.
+  #
+  # @param adventure_id [Integer] id för äventyret som ska startas
+  # @return [Hash] den nyskapade spelomgångens data
   def start_run(adventure_id)
-    token = session[:token] ||= SecureRandom.hex(16)
-    first_room = db.execute(
-      "SELECT * FROM arooms WHERE adventure_id = ? ORDER BY room_order ASC LIMIT 1",
-      adventure_id
-    ).first
-    db.execute(
-      "INSERT INTO player_runs (session_token, adventure_id, current_room_id, inventory) VALUES (?, ?, ?, '')",
-      [token, adventure_id, first_room['id']]
-    )
-    db.execute(
-      "SELECT * FROM player_runs WHERE session_token = ? AND adventure_id = ? AND finished = 0",
-      [token, adventure_id]
-    ).first
+    token      = session[:token] ||= SecureRandom.hex(16)
+    first_room = Room.first_in_adventure(adventure_id)
+    PlayerRun.create(token, adventure_id, first_room['id'])
   end
 
+  # Omvandlar spelarens kommaseparerade inventory-sträng till en array av föremålsnycklar.
+  #
+  # @param run [Hash] spelomgångens data-hash
+  # @return [Array<String>] lista med föremålsnycklar, tom array om inventory saknas
   def inventory_list(run)
     return [] if run['inventory'].nil? || run['inventory'].empty?
     run['inventory'].split(',').map(&:strip).reject(&:empty?)
   end
 
+  # Kontrollerar om spelaren bär på ett specifikt föremål i sin inventory.
+  #
+  # @param run [Hash] spelomgångens data-hash
+  # @param item [String] föremålsnyckeln att leta efter
+  # @return [Boolean] true om föremålet finns i inventory, annars false
   def has_item?(run, item)
     return false if item.nil? || item.empty?
     inventory_list(run).include?(item)
   end
 
+  # Lägger till ett eller flera föremål i spelarens inventory.
+  # Föremål anges som en kommaseparerad sträng.
+  #
+  # @param run [Hash] spelomgångens data-hash
+  # @param items_str [String] kommaseparerad sträng med föremålsnycklar att lägga till
+  # @return [void]
   def add_items(run, items_str)
     return if items_str.nil? || items_str.empty?
     inv = inventory_list(run)
     items_str.split(',').map(&:strip).each { |i| inv << i unless i.empty? }
-    db.execute("UPDATE player_runs SET inventory = ? WHERE id = ?", [inv.join(','), run['id']])
+    PlayerRun.update_inventory(run['id'], inv.join(','))
   end
 
+  # Tar bort ett föremål från spelarens inventory.
+  # Endast den första förekomsten av föremålet tas bort.
+  #
+  # @param run [Hash] spelomgångens data-hash
+  # @param item [String] föremålsnyckeln att ta bort
+  # @return [void]
   def remove_item(run, item)
     return if item.nil? || item.empty?
     inv = inventory_list(run)
     inv.delete_at(inv.index(item)) if inv.include?(item)
-    db.execute("UPDATE player_runs SET inventory = ? WHERE id = ?", [inv.join(','), run['id']])
+    PlayerRun.update_inventory(run['id'], inv.join(','))
   end
 
+  # Returnerar ett läsbart namn med emoji för ett föremål baserat på dess nyckel.
+  # Om nyckeln inte känns igen returneras nyckeln oförändrad.
+  #
+  # @param key [String] föremålsnyckeln, t.ex. 'sword' eller 'health_potion'
+  # @return [String] föremålets visningsnamn med emoji, eller nyckeln om den saknas i listan
   def item_name(key)
     names = {
       'sword'        => '🗡️ Rostigt svärd',
@@ -94,81 +116,79 @@ helpers do
 end
 
 # ────────────────────────────────────────
-# Login / Register
+# Inloggning / Registrering
 # ────────────────────────────────────────
+
+# Lägger till en kort fördröjning på routen '/' för att motverka brute-force-attacker.
+before('/') { sleep(0.5) }
+
+# Visar inloggnings- och registreringssidan.
 get '/' do
   slim :loggin
 end
 
+# Hanterar inloggningsformuläret. Autentiserar användaren och skapar en session.
+# Omdirigerar till startsidan vid lyckad inloggning, annars tillbaka till '/' med felmeddelande.
 post '/login' do
-  name = params["name"]
-  pwd  = params["pwd"]
-  db2  = SQLite3::Database.new("db/databas.db")
-  db2.results_as_hash = true
-  result = db2.execute("SELECT id, pwd_digest FROM user WHERE name = ?", name)
-  if result.empty?
-    redirect('/?error=Användaren+finns+inte')
-  end
-  user_id    = result.first["id"]
-  pwd_digest = result.first["pwd_digest"]
-  if BCrypt::Password.new(pwd_digest) == pwd
-    session[:user_id] = user_id
-    redirect('/home')
+  user = User.authenticate(params['name'], params['pwd'])
+  if user.nil?
+    redirect('/?error=Fel+användarnamn+eller+lösenord')
   else
-    redirect('/?error=Fel+lösenord')
+    session[:user_id] = user['id']
+    redirect('/home')
   end
 end
 
+# Hanterar registreringsformuläret. Validerar indata och skapar en ny användare.
+# Omdirigerar till startsidan vid lyckat skapande, annars tillbaka med felmeddelande.
 post '/user' do
-  name        = params["name"]
-  pwd         = params["pwd"]
-  pwd_confirm = params["pwd_confirm"]
+  name        = params['name']
+  pwd         = params['pwd']
+  pwd_confirm = params['pwd_confirm']
 
   if pwd.length < 3
     redirect('/?error=Lösenordet+måste+vara+minst+3+tecken')
-  end
-
-  db2    = SQLite3::Database.new("db/databas.db")
-  result = db2.execute("SELECT id FROM user WHERE name = ?", name)
-
-  if result.empty?
-    if pwd == pwd_confirm
-      pwd_digest = BCrypt::Password.create(pwd)
-      db2.execute("INSERT INTO user (name, pwd_digest) VALUES (?, ?)", [name, pwd_digest])
-      redirect('/home')
-    else
-      redirect('/?error=Lösenorden+matchar+inte')
-    end
-  else
+  elsif pwd != pwd_confirm
+    redirect('/?error=Lösenorden+matchar+inte')
+  elsif User.exists?(name)
     redirect('/?error=Användarnamnet+är+redan+taget')
+  else
+    User.create(name, pwd)
+    redirect('/home')
   end
 end
 
+# Loggar ut användaren genom att rensa sessionen och omdirigera till startsidan.
 get '/logout' do
   session.clear
   redirect '/'
 end
 
 # ────────────────────────────────────────
-# Home: list all adventures
+# Hem: lista alla äventyr
 # ────────────────────────────────────────
+
+# Visar startsidan med en lista över alla tillgängliga äventyr.
+# Stöder fritextsökning via query-parametern 'q'.
+# Kräver att användaren är inloggad.
 get '/home' do
   require_login!
   q = params[:q]
-  if q && !q.empty?
-    @adventures = db.execute("SELECT * FROM adventurename WHERE name LIKE ?", "%#{q}%")
-  else
-    @adventures = db.execute("SELECT * FROM adventurename")
-  end
+  @adventures = (q && !q.empty?) ? Adventure.search(q) : Adventure.all
   slim :index
 end
 
 # ────────────────────────────────────────
-# Adventure page: current room, inventory, log
+# Äventyrssidan: aktuellt rum, inventory, logg
 # ────────────────────────────────────────
+
+# Visar äventyrssidan med aktuellt rum, tillgängliga handlingar, inventory och logg.
+# Om spelaren inte har en aktiv omgång visas en startsida istället.
+# Returnerar 404 om äventyret inte finns.
+# Kräver att användaren är inloggad.
 get '/adventure/:id' do
   require_login!
-  @adventure = db.execute("SELECT * FROM adventurename WHERE id = ?", params[:id].to_i).first
+  @adventure = Adventure.find(params[:id])
   halt 404, "Äventyret hittades inte" unless @adventure
 
   @run = current_run(@adventure['id'])
@@ -176,52 +196,48 @@ get '/adventure/:id' do
   if @run.nil?
     slim :adventure_start
   else
-    @room = db.execute("SELECT * FROM arooms WHERE id = ?", @run['current_room_id']).first
-    @total_rooms = db.execute(
-      "SELECT COUNT(*) as c FROM arooms WHERE adventure_id = ?", @adventure['id']
-    ).first['c']
+    @room        = Room.find(@run['current_room_id'])
+    @total_rooms = Room.count_in_adventure(@adventure['id'])
 
-    all_actions = db.execute("SELECT * FROM actions WHERE room_id = ?", @room['id'])
-
-  
-    used_ids = db.execute(
-      "SELECT action_id FROM run_log WHERE run_id = ?", @run['id']
-    ).map { |row| row['action_id'] }
+    all_actions = Action.for_room(@room['id'])
+    used_ids    = RunLog.used_action_ids(@run['id'])
 
     @available_actions = all_actions.select do |action|
-      next false if used_ids.include?(action['id'])  # redan använd
+      next false if used_ids.include?(action['id'])
       action['requires_item'].nil? || action['requires_item'].empty? || has_item?(@run, action['requires_item'])
     end
 
     @inventory = inventory_list(@run)
-
-    @log = db.execute(
-      "SELECT * FROM run_log WHERE run_id = ? ORDER BY id DESC LIMIT 5",
-      @run['id']
-    )
+    @log       = RunLog.recent(@run['id'])
 
     slim :adventure
   end
 end
 
 # ────────────────────────────────────────
-# Start / restart a run
+# Starta / starta om en spelomgång
 # ────────────────────────────────────────
+
+# Raderar eventuell befintlig omgång och startar en ny från början.
+# Kräver att användaren är inloggad.
 post '/adventure/:id/start' do
   require_login!
   adventure_id = params[:id].to_i
   token = session[:token] ||= SecureRandom.hex(16)
-  db.execute(
-    "DELETE FROM player_runs WHERE session_token = ? AND adventure_id = ?",
-    [token, adventure_id]
-  )
+  PlayerRun.delete_for(token, adventure_id)
   start_run(adventure_id)
   redirect "/adventure/#{adventure_id}"
 end
 
 # ────────────────────────────────────────
-# Take an action
+# Utför en handling
 # ────────────────────────────────────────
+
+# Utför en vald handling i det aktuella rummet.
+# Hanterar inventory-förändringar, loggning och eventuell rumsförflyttning eller avslut.
+# Returnerar 400 om ingen aktiv omgång finns, handlingen är i fel rum,
+# eller spelaren saknar ett krävt föremål. Returnerar 404 om handlingen inte finns.
+# Kräver att användaren är inloggad.
 post '/adventure/:id/action/:action_id' do
   require_login!
   adventure_id = params[:id].to_i
@@ -230,39 +246,29 @@ post '/adventure/:id/action/:action_id' do
   @run = current_run(adventure_id)
   halt 400, "Inget aktivt spel" unless @run
 
-  action = db.execute("SELECT * FROM actions WHERE id = ?", action_id).first
+  action = Action.find(action_id)
   halt 404, "Handlingen hittades inte" unless action
-  halt 400, "Fel rum" unless action['room_id'] == @run['current_room_id']
+  halt 400, "Fel rum"                  unless action['room_id'] == @run['current_room_id']
 
   if action['requires_item'] && !action['requires_item'].empty?
     halt 400, "Du har inte föremålet" unless has_item?(@run, action['requires_item'])
   end
 
-  add_items(@run, action['gives_item']) if action['gives_item'] && !action['gives_item'].empty?
-  @run = db.execute("SELECT * FROM player_runs WHERE id = ?", @run['id']).first
-  remove_item(@run, action['removes_item']) if action['removes_item'] && !action['removes_item'].empty?
-  @run = db.execute("SELECT * FROM player_runs WHERE id = ?", @run['id']).first
+  add_items(@run, action['gives_item'])     if action['gives_item']     && !action['gives_item'].empty?
+  @run = PlayerRun.find(@run['id'])
+  remove_item(@run, action['removes_item']) if action['removes_item']   && !action['removes_item'].empty?
+  @run = PlayerRun.find(@run['id'])
 
-  db.execute(
-  "INSERT INTO run_log (run_id, action_id, action_name, result_text) VALUES (?, ?, ?, ?)",
-  [@run['id'], action['id'], action['name'], action['result']]
-  )
-  
+  RunLog.create(@run['id'], action['id'], action['name'], action['result'])
 
   if action['moves_to_next'] == 1
-    current_room = db.execute("SELECT * FROM arooms WHERE id = ?", @run['current_room_id']).first
-    next_room = db.execute(
-      "SELECT * FROM arooms WHERE adventure_id = ? AND room_order = ?",
-      [adventure_id, current_room['room_order'] + 1]
-    ).first
+    current_room = Room.find(@run['current_room_id'])
+    next_room    = Room.next_room(adventure_id, current_room['room_order'])
 
     if next_room
-      db.execute(
-        "UPDATE player_runs SET current_room_id = ? WHERE id = ?",
-        [next_room['id'], @run['id']]
-      )
+      PlayerRun.move_to_room(@run['id'], next_room['id'])
     else
-      db.execute("UPDATE player_runs SET finished = 1 WHERE id = ?", @run['id'])
+      PlayerRun.finish(@run['id'])
     end
   end
 

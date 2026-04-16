@@ -149,13 +149,8 @@ def populate_tables(db)
 
   db.execute('INSERT INTO actions (room_id, name, result, moves_to_next) VALUES (3,
     "Hoppa ner i brunnen",
-    "Det var inte klokt. Du klättrar tillbaka upp, blöt och tom-händad.",
+    "Det var inte klokt. Du klättrar tillbaka upp, blöt och tomhänt.",
     1)')
-
-  db.execute('INSERT INTO actions (room_id, name, result, requires_item, removes_item) VALUES (3,
-    "Drick hälsodrycken",
-    "Du dricker den grönaktiga vätskan. Den smakar fruktansvärt men du känner dig omedelbart bättre!",
-    "health_potion", "health_potion")')
 
   # ── Room 4 actions ──────────────────────────────────
   db.execute('INSERT INTO actions (room_id, name, result) VALUES (4,
