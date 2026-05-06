@@ -12,6 +12,9 @@ html lang="sv"
       - if session[:user_id]
         nav
           a href="/home" Hem
+          - if session[:is_admin]
+            |  · 
+            a href="/admin/users" 👑 Admin
           |  · 
           a href="/logout" Logga ut
     main

@@ -1,0 +1,45 @@
+h1 👑 Admin — Hantera användare
+
+- if params[:error]
+  div class="error-message"
+    | #{params[:error]}
+
+- if params[:success]
+  div class="success-message"
+    | #{params[:success]}
+
+table class="user-table"
+  thead
+    tr
+      th ID
+      th Namn
+      th Roll
+      th Åtgärder
+  tbody
+    - @users.each do |u|
+      tr
+        td #{u['id']}
+        td #{u['name']}
+        td
+          - if u['is_admin'] == 1
+            | Admin
+          - else
+            | Användare
+        td
+          / Toggle admin-knapp (kan inte ändra sig själv)
+          - unless u['id'] == session[:user_id]
+            form action="/admin/users/#{u['id']}/toggle_admin" method="post" style="display:inline;"
+              - if u['is_admin'] == 1
+                input type="submit" value="Ta bort admin" class="btn-danger" style="background:#856404; margin-right:6px;"
+              - else
+                input type="submit" value="Gör till admin" class="btn" style="margin-right:6px;"
+
+          / Radera-knapp med bekräftelse (kan inte radera sig själv)
+          - unless u['id'] == session[:user_id]
+            form action="/admin/users/#{u['id']}/delete" method="post" style="display:inline;"
+              input type="submit" value="🗑 Radera" class="btn-danger" onclick="return confirm('Är du säker? Detta raderar användaren och all deras data.')"
+          - if u['id'] == session[:user_id]
+            span style="color:#999; font-size:13px;" (det är du)
+
+div class="admin-note"
+  | ⚠️ Att radera en användare tar bort all kopplad data permanent (spelomgångar, inventory, logg).

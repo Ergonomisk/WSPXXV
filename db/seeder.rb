@@ -1,6 +1,7 @@
 require 'sqlite3'
 
 db = SQLite3::Database.new("databas.db")
+db.execute("PRAGMA foreign_keys = ON")
 
 def seed!(db)
   puts "🧹 Dropping old tables..."
@@ -13,25 +14,28 @@ def seed!(db)
 end
 
 def drop_tables(db)
+  # Drop in reverse dependency order
+  db.execute('DROP TABLE IF EXISTS run_log')
+  db.execute('DROP TABLE IF EXISTS inventory_items')
+  db.execute('DROP TABLE IF EXISTS player_runs')
+  db.execute('DROP TABLE IF EXISTS actions')
+  db.execute('DROP TABLE IF EXISTS arooms')
   db.execute('DROP TABLE IF EXISTS adventurename')
   db.execute('DROP TABLE IF EXISTS user')
-  db.execute('DROP TABLE IF EXISTS arooms')
-  db.execute('DROP TABLE IF EXISTS actions')
-  db.execute('DROP TABLE IF EXISTS player_runs')
-  db.execute('DROP TABLE IF EXISTS run_log')
 end
 
 def create_tables(db)
+  db.execute('CREATE TABLE user (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              name TEXT NOT NULL UNIQUE,
+              pwd_digest TEXT NOT NULL,
+              is_admin INTEGER NOT NULL DEFAULT 0)')
+
   db.execute('CREATE TABLE adventurename (
               id INTEGER PRIMARY KEY AUTOINCREMENT,
               pic_link TEXT,
               name TEXT NOT NULL,
               description TEXT)')
-
-  db.execute('CREATE TABLE user (
-              id INTEGER PRIMARY KEY AUTOINCREMENT,
-              name TEXT NOT NULL,
-              pwd_digest TEXT NOT NULL)')
 
   db.execute('CREATE TABLE arooms (
               id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -39,12 +43,11 @@ def create_tables(db)
               room_order INTEGER NOT NULL,
               name TEXT NOT NULL,
               description TEXT,
-              FOREIGN KEY (adventure_id) REFERENCES adventurename(id))')
+              FOREIGN KEY (adventure_id) REFERENCES adventurename(id)
+                ON DELETE CASCADE)')
 
-  # requires_item: item that must be in inventory (NULL = always shown)
-  # gives_item: comma-separated items added to inventory (NULL = nothing)
-  # removes_item: item removed from inventory (NULL = nothing)
-  # moves_to_next: 1 = advances player to next room after this action
+  # requires_item / gives_item / removes_item: comma-separated item keys (kept on actions
+  # since they define the game logic, not a player state)
   db.execute('CREATE TABLE actions (
               id INTEGER PRIMARY KEY AUTOINCREMENT,
               room_id INTEGER NOT NULL,
@@ -54,29 +57,50 @@ def create_tables(db)
               gives_item TEXT,
               removes_item TEXT,
               moves_to_next INTEGER DEFAULT 0,
-              FOREIGN KEY (room_id) REFERENCES arooms(id))')
+              FOREIGN KEY (room_id) REFERENCES arooms(id)
+                ON DELETE CASCADE)')
 
-  # session_token: from Sinatra session, ties run to browser
-  # inventory: comma-separated item names e.g. "sword,key"
   db.execute('CREATE TABLE player_runs (
               id INTEGER PRIMARY KEY AUTOINCREMENT,
               session_token TEXT NOT NULL,
+              user_id INTEGER NOT NULL,
               adventure_id INTEGER NOT NULL,
               current_room_id INTEGER NOT NULL,
-              inventory TEXT DEFAULT "",
-              finished INTEGER DEFAULT 0)')
+              finished INTEGER DEFAULT 0,
+              FOREIGN KEY (user_id) REFERENCES user(id)
+                ON DELETE CASCADE,
+              FOREIGN KEY (adventure_id) REFERENCES adventurename(id)
+                ON DELETE CASCADE)')
+
+  # Relational inventory — one row per item carried per run
+  db.execute('CREATE TABLE inventory_items (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              run_id INTEGER NOT NULL,
+              item_key TEXT NOT NULL,
+              FOREIGN KEY (run_id) REFERENCES player_runs(id)
+                ON DELETE CASCADE)')
 
   db.execute('CREATE TABLE run_log (
               id INTEGER PRIMARY KEY AUTOINCREMENT,
               run_id INTEGER NOT NULL,
-              action_id INTEGER NOT NULL,   
+              action_id INTEGER NOT NULL,
               action_name TEXT NOT NULL,
               result_text TEXT,
               timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-              FOREIGN KEY (run_id) REFERENCES player_runs(id))')
+              FOREIGN KEY (run_id) REFERENCES player_runs(id)
+                ON DELETE CASCADE)')
 end
 
 def populate_tables(db)
+  require 'bcrypt'
+
+  # ── Adminanvändare ───────────────────────────────────
+  admin_digest = BCrypt::Password.create('admin')
+  db.execute(
+    "INSERT INTO user (name, pwd_digest, is_admin) VALUES (?, ?, 1)",
+    ['admin', admin_digest]
+  )
+  puts "👑 Admin-användare skapad: namn=admin, lösenord=admin"
 
   # ═══════════════════════════════════════════════════════
   # ADVENTURE 1: Den mörka skogen (5 rooms)
@@ -191,7 +215,6 @@ def populate_tables(db)
     "Draken öppnar ögonen och böjer huvudet i respekt. Det verkar som att det magiska svärdet har en koppling till detta väsen...",
     "magic_sword")')
 
-
   # ═══════════════════════════════════════════════════════
   # ADVENTURE 2: Det gamla slottet (5 rooms)
   # ═══════════════════════════════════════════════════════
@@ -219,7 +242,7 @@ def populate_tables(db)
     "Mageens torn",
     "Du har nått toppen! En gammal magiker med långa vita kläder vänder sig om. Prinsessan är inlåst i ett bur av ljus. Magikern ler elakt.")')
 
-  # Room 1 actions (Slottsporten)
+  # Room 6 actions (Slottsporten)
   db.execute('INSERT INTO actions (room_id, name, result, gives_item) VALUES (6,
     "Ta upp den rostiga nyckeln",
     "Du stoppar ner nyckeln i fickan. Den verkar passa ett gammalt lås.",
@@ -235,7 +258,7 @@ def populate_tables(db)
     "Du smyger in genom glipan. Inuti luktar det gammalt och dammigt.",
     1)')
 
-  # Room 2 actions (Ingångshallen)
+  # Room 7 actions (Ingångshallen)
   db.execute('INSERT INTO actions (room_id, name, result, requires_item, moves_to_next) VALUES (7,
     "Smörj rustningens leder med oljan",
     "Du smörjer den knarriga rustningen. Den öppnar sig och avslöjar ett skarpt svärd!",
@@ -251,7 +274,7 @@ def populate_tables(db)
     "Du klättrar uppför den knarriga stentrappan mot biblioteket.",
     1)')
 
-  # Room 3 actions (Biblioteket)
+  # Room 8 actions (Biblioteket)
   db.execute('INSERT INTO actions (room_id, name, result, gives_item) VALUES (8,
     "Ta besvärjelsepinnen",
     "Du tar den glödande pinnen. Den vibrerar i din hand och känns magisk.",
@@ -267,7 +290,7 @@ def populate_tables(db)
     "Du lämnar bibliotekets kaos och går mot vaktkorridoren.",
     1)')
 
-  # Room 4 actions (Vaktrummets korridor)
+  # Room 9 actions (Vaktrummets korridor)
   db.execute('INSERT INTO actions (room_id, name, result) VALUES (9,
     "Försök gå förbi statyerna",
     "Statyerna vaknar till liv och blockerar din väg! Du behöver magi för att passera.")')
@@ -282,7 +305,7 @@ def populate_tables(db)
     "Pinnen skickar ut ett blixt av ljus! Statyerna splittras. Du passerar!",
     "wand", 1)')
 
-  # Room 5 actions (Mageens torn)
+  # Room 10 actions (Mageens torn)
   db.execute('INSERT INTO actions (room_id, name, result) VALUES (10,
     "Prata med magikern",
     "Magikern skrattar: Du kan aldrig besegra mig! Inte utan ett riktigt vapen och magi!")')

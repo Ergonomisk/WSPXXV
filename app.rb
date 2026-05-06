@@ -9,7 +9,7 @@ enable :sessions
 set :session_secret, 'rollspelsdax_super_hemlig_nyckel_som_ar_tillrackligt_lang_for_rack_session_kryptering'
 
 # ────────────────────────────────────────
-# Helpers (Vy-hjälpmetoder)
+# Helpers
 # ────────────────────────────────────────
 helpers do
   # Kontrollerar om en användare är inloggad via sessionen.
@@ -19,84 +19,19 @@ helpers do
     !session[:user_id].nil?
   end
 
-  # Kräver att användaren är inloggad, annars omdirigeras till startsidan.
+  # Kontrollerar om den inloggade användaren har adminbehörighet.
   #
-  # @return [void]
-  def require_login!
-    redirect '/' unless logged_in?
+  # @return [Boolean] true om is_admin är satt i sessionen, annars false
+  def admin?
+    session[:is_admin] == true
   end
 
-  # Hämtar den aktiva spelomgången för den inloggade spelaren och ett givet äventyr.
-  # Skapar ett sessionstoken om inget finns sedan tidigare.
+  # Returnerar ett läsbart visningsnamn med emoji för ett föremål
+  # baserat på dess interna nyckel. Om nyckeln saknas i tabellen
+  # returneras nyckeln oförändrad som fallback.
   #
-  # @param adventure_id [Integer] id för äventyret
-  # @return [Hash, nil] aktiv spelomgång som hash, eller nil om ingen pågår
-  def current_run(adventure_id)
-    token = session[:token] ||= SecureRandom.hex(16)
-    PlayerRun.find_active(token, adventure_id)
-  end
-
-  # Startar en ny spelomgång för spelaren i ett givet äventyr,
-  # med start i det första rummet.
-  #
-  # @param adventure_id [Integer] id för äventyret som ska startas
-  # @return [Hash] den nyskapade spelomgångens data
-  def start_run(adventure_id)
-    token      = session[:token] ||= SecureRandom.hex(16)
-    first_room = Room.first_in_adventure(adventure_id)
-    PlayerRun.create(token, adventure_id, first_room['id'])
-  end
-
-  # Omvandlar spelarens kommaseparerade inventory-sträng till en array av föremålsnycklar.
-  #
-  # @param run [Hash] spelomgångens data-hash
-  # @return [Array<String>] lista med föremålsnycklar, tom array om inventory saknas
-  def inventory_list(run)
-    return [] if run['inventory'].nil? || run['inventory'].empty?
-    run['inventory'].split(',').map(&:strip).reject(&:empty?)
-  end
-
-  # Kontrollerar om spelaren bär på ett specifikt föremål i sin inventory.
-  #
-  # @param run [Hash] spelomgångens data-hash
-  # @param item [String] föremålsnyckeln att leta efter
-  # @return [Boolean] true om föremålet finns i inventory, annars false
-  def has_item?(run, item)
-    return false if item.nil? || item.empty?
-    inventory_list(run).include?(item)
-  end
-
-  # Lägger till ett eller flera föremål i spelarens inventory.
-  # Föremål anges som en kommaseparerad sträng.
-  #
-  # @param run [Hash] spelomgångens data-hash
-  # @param items_str [String] kommaseparerad sträng med föremålsnycklar att lägga till
-  # @return [void]
-  def add_items(run, items_str)
-    return if items_str.nil? || items_str.empty?
-    inv = inventory_list(run)
-    items_str.split(',').map(&:strip).each { |i| inv << i unless i.empty? }
-    PlayerRun.update_inventory(run['id'], inv.join(','))
-  end
-
-  # Tar bort ett föremål från spelarens inventory.
-  # Endast den första förekomsten av föremålet tas bort.
-  #
-  # @param run [Hash] spelomgångens data-hash
-  # @param item [String] föremålsnyckeln att ta bort
-  # @return [void]
-  def remove_item(run, item)
-    return if item.nil? || item.empty?
-    inv = inventory_list(run)
-    inv.delete_at(inv.index(item)) if inv.include?(item)
-    PlayerRun.update_inventory(run['id'], inv.join(','))
-  end
-
-  # Returnerar ett läsbart namn med emoji för ett föremål baserat på dess nyckel.
-  # Om nyckeln inte känns igen returneras nyckeln oförändrad.
-  #
-  # @param key [String] föremålsnyckeln, t.ex. 'sword' eller 'health_potion'
-  # @return [String] föremålets visningsnamn med emoji, eller nyckeln om den saknas i listan
+  # @param key [String] föremålets interna nyckel, t.ex. 'sword' eller 'gold_coin'
+  # @return [String] visningsnamn med emoji, eller nyckeln om den inte finns i tabellen
   def item_name(key)
     names = {
       'sword'        => '🗡️ Rostigt svärd',
@@ -116,37 +51,88 @@ helpers do
 end
 
 # ────────────────────────────────────────
+# Before-filter: inloggning
+# ────────────────────────────────────────
+
+# Routes som är tillgängliga utan inloggning.
+GUEST_ROUTES = ['/', '/login', '/user'].freeze
+
+# Globalt before-filter som körs före varje route.
+# Omdirigerar till startsidan om användaren inte är inloggad
+# och försöker nå en skyddad route.
+#
+# @return [void]
+before do
+  unless GUEST_ROUTES.include?(request.path_info) || logged_in?
+    redirect '/'
+  end
+end
+
+# ────────────────────────────────────────
+# Before-filter: admin
+# ────────────────────────────────────────
+
+# Before-filter som skyddar alla routes under /admin.
+# Omdirigerar till /home om den inloggade användaren inte är admin.
+#
+# @return [void]
+before '/admin*' do
+  redirect '/home' unless admin?
+end
+
+# ────────────────────────────────────────
 # Inloggning / Registrering
 # ────────────────────────────────────────
 
-# Lägger till en kort fördröjning på routen '/' för att motverka brute-force-attacker.
+# Before-filter för routen '/'.
+# Lägger till en kort fördröjning för att motverka brute-force-attacker.
+#
+# @return [void]
 before('/') { sleep(0.5) }
 
 # Visar inloggnings- och registreringssidan.
+#
+# @return [String] renderad HTML via Slim-mallen :loggin
 get '/' do
   slim :loggin
 end
 
-# Hanterar inloggningsformuläret. Autentiserar användaren och skapar en session.
-# Omdirigerar till startsidan vid lyckad inloggning, annars tillbaka till '/' med felmeddelande.
+# Hanterar inloggningsformuläret.
+# Autentiserar användaren och sparar id samt adminbehörighet i sessionen.
+# Omdirigerar till /home vid lyckad inloggning, annars tillbaka till /
+# med ett felmeddelande i query-strängen.
+#
+# @param name [String] formulärparameter – användarnamnet
+# @param pwd  [String] formulärparameter – lösenordet i klartext
+# @return [void]
 post '/login' do
   user = User.authenticate(params['name'], params['pwd'])
   if user.nil?
     redirect('/?error=Fel+användarnamn+eller+lösenord')
   else
-    session[:user_id] = user['id']
+    session[:user_id]  = user['id']
+    session[:is_admin] = user['is_admin'] == 1
     redirect('/home')
   end
 end
 
-# Hanterar registreringsformuläret. Validerar indata och skapar en ny användare.
-# Omdirigerar till startsidan vid lyckat skapande, annars tillbaka med felmeddelande.
+# Hanterar registreringsformuläret.
+# Validerar indata, skapar en ny användare och loggar in direkt.
+# Omdirigerar till /home vid lyckat skapande, annars tillbaka till /
+# med ett felmeddelande i query-strängen.
+#
+# @param name        [String] formulärparameter – önskat användarnamn
+# @param pwd         [String] formulärparameter – lösenord i klartext
+# @param pwd_confirm [String] formulärparameter – lösenordsbekräftelse
+# @return [void]
 post '/user' do
-  name        = params['name']
-  pwd         = params['pwd']
-  pwd_confirm = params['pwd_confirm']
+  name        = params['name'].to_s.strip
+  pwd         = params['pwd'].to_s
+  pwd_confirm = params['pwd_confirm'].to_s
 
-  if pwd.length < 3
+  if name.empty?
+    redirect('/?error=Användarnamnet+får+inte+vara+tomt')
+  elsif pwd.length < 3
     redirect('/?error=Lösenordet+måste+vara+minst+3+tecken')
   elsif pwd != pwd_confirm
     redirect('/?error=Lösenorden+matchar+inte')
@@ -154,11 +140,17 @@ post '/user' do
     redirect('/?error=Användarnamnet+är+redan+taget')
   else
     User.create(name, pwd)
+    user = User.authenticate(name, pwd)
+    session[:user_id]  = user['id']
+    session[:is_admin] = user['is_admin'] == 1
     redirect('/home')
   end
 end
 
-# Loggar ut användaren genom att rensa sessionen och omdirigera till startsidan.
+# Loggar ut användaren genom att rensa hela sessionen
+# och omdirigera till startsidan.
+#
+# @return [void]
 get '/logout' do
   session.clear
   redirect '/'
@@ -168,30 +160,35 @@ end
 # Hem: lista alla äventyr
 # ────────────────────────────────────────
 
-# Visar startsidan med en lista över alla tillgängliga äventyr.
+# Visar startsidan med alla tillgängliga äventyr.
 # Stöder fritextsökning via query-parametern 'q'.
-# Kräver att användaren är inloggad.
+# Kräver att användaren är inloggad (hanteras av globalt before-filter).
+#
+# @param q [String, nil] valfri query-parameter för fritextsökning på äventyrsnamn
+# @return [String] renderad HTML via Slim-mallen :index
 get '/home' do
-  require_login!
   q = params[:q]
   @adventures = (q && !q.empty?) ? Adventure.search(q) : Adventure.all
   slim :index
 end
 
 # ────────────────────────────────────────
-# Äventyrssidan: aktuellt rum, inventory, logg
+# Äventyret
 # ────────────────────────────────────────
 
-# Visar äventyrssidan med aktuellt rum, tillgängliga handlingar, inventory och logg.
-# Om spelaren inte har en aktiv omgång visas en startsida istället.
-# Returnerar 404 om äventyret inte finns.
-# Kräver att användaren är inloggad.
+# Visar äventyrssidan för ett givet äventyr.
+# Om spelaren saknar en aktiv omgång visas startsidan för äventyret.
+# Annars laddas aktuellt rum, tillgängliga handlingar, inventory och logg.
+# Returnerar 404 om äventyret inte hittas.
+# Kräver att användaren är inloggad (hanteras av globalt before-filter).
+#
+# @param id [String] route-parameter – äventyrets databas-id
+# @return [String] renderad HTML via Slim-mallen :adventure_start eller :adventure
 get '/adventure/:id' do
-  require_login!
   @adventure = Adventure.find(params[:id])
   halt 404, "Äventyret hittades inte" unless @adventure
 
-  @run = current_run(@adventure['id'])
+  @run = PlayerRun.find_active(session[:user_id], @adventure['id'])
 
   if @run.nil?
     slim :adventure_start
@@ -202,12 +199,15 @@ get '/adventure/:id' do
     all_actions = Action.for_room(@room['id'])
     used_ids    = RunLog.used_action_ids(@run['id'])
 
+    # Filtrera bort handlingar som redan utförts eller kräver föremål
+    # som spelaren inte bär på.
     @available_actions = all_actions.select do |action|
       next false if used_ids.include?(action['id'])
-      action['requires_item'].nil? || action['requires_item'].empty? || has_item?(@run, action['requires_item'])
+      req = action['requires_item']
+      req.nil? || req.empty? || Inventory.has?(@run['id'], req)
     end
 
-    @inventory = inventory_list(@run)
+    @inventory = Inventory.for_run(@run['id'])
     @log       = RunLog.recent(@run['id'])
 
     slim :adventure
@@ -218,14 +218,19 @@ end
 # Starta / starta om en spelomgång
 # ────────────────────────────────────────
 
-# Raderar eventuell befintlig omgång och startar en ny från början.
-# Kräver att användaren är inloggad.
+# Startar (eller startar om) en spelomgång för det givna äventyret.
+# Eventuella tidigare omgångar raderas först — ON DELETE CASCADE tar
+# automatiskt bort kopplade inventory_items och run_log-poster.
+# Skapar sedan en ny omgång med start i äventyrets första rum.
+# Kräver att användaren är inloggad (hanteras av globalt before-filter).
+#
+# @param id [String] route-parameter – äventyrets databas-id
+# @return [void]
 post '/adventure/:id/start' do
-  require_login!
   adventure_id = params[:id].to_i
-  token = session[:token] ||= SecureRandom.hex(16)
-  PlayerRun.delete_for(token, adventure_id)
-  start_run(adventure_id)
+  PlayerRun.delete_for(session[:user_id], adventure_id)
+  first_room = Room.first_in_adventure(adventure_id)
+  PlayerRun.create(session[:user_id], adventure_id, first_room['id'])
   redirect "/adventure/#{adventure_id}"
 end
 
@@ -234,37 +239,42 @@ end
 # ────────────────────────────────────────
 
 # Utför en vald handling i det aktuella rummet.
-# Hanterar inventory-förändringar, loggning och eventuell rumsförflyttning eller avslut.
-# Returnerar 400 om ingen aktiv omgång finns, handlingen är i fel rum,
-# eller spelaren saknar ett krävt föremål. Returnerar 404 om handlingen inte finns.
-# Kräver att användaren är inloggad.
+# Hanterar inventory-förändringar (lägger till och tar bort föremål),
+# loggar handlingen och flyttar spelaren till nästa rum om handlingen
+# är märkt med moves_to_next. Avslutar omgången om inget nästa rum finns.
+#
+# Returnerar 400 om ingen aktiv omgång finns, handlingen tillhör fel rum,
+# eller spelaren saknar ett krävt föremål.
+# Returnerar 404 om handlingen inte hittas.
+# Kräver att användaren är inloggad (hanteras av globalt before-filter).
+#
+# @param id        [String] route-parameter – äventyrets databas-id
+# @param action_id [String] route-parameter – handlingens databas-id
+# @return [void]
 post '/adventure/:id/action/:action_id' do
-  require_login!
   adventure_id = params[:id].to_i
   action_id    = params[:action_id].to_i
 
-  @run = current_run(adventure_id)
+  @run = PlayerRun.find_active(session[:user_id], adventure_id)
   halt 400, "Inget aktivt spel" unless @run
 
   action = Action.find(action_id)
-  halt 404, "Handlingen hittades inte" unless action
-  halt 400, "Fel rum"                  unless action['room_id'] == @run['current_room_id']
+  halt 404, "Handlingen hittades inte"  unless action
+  halt 400, "Fel rum"                   unless action['room_id'] == @run['current_room_id']
 
-  if action['requires_item'] && !action['requires_item'].empty?
-    halt 400, "Du har inte föremålet" unless has_item?(@run, action['requires_item'])
+  req = action['requires_item']
+  if req && !req.empty?
+    halt 400, "Du har inte föremålet" unless Inventory.has?(@run['id'], req)
   end
 
-  add_items(@run, action['gives_item'])     if action['gives_item']     && !action['gives_item'].empty?
-  @run = PlayerRun.find(@run['id'])
-  remove_item(@run, action['removes_item']) if action['removes_item']   && !action['removes_item'].empty?
-  @run = PlayerRun.find(@run['id'])
+  Inventory.add(@run['id'], action['gives_item'])      if action['gives_item']   && !action['gives_item'].empty?
+  Inventory.remove(@run['id'], action['removes_item'])  if action['removes_item'] && !action['removes_item'].empty?
 
   RunLog.create(@run['id'], action['id'], action['name'], action['result'])
 
   if action['moves_to_next'] == 1
     current_room = Room.find(@run['current_room_id'])
     next_room    = Room.next_room(adventure_id, current_room['room_order'])
-
     if next_room
       PlayerRun.move_to_room(@run['id'], next_room['id'])
     else
@@ -274,4 +284,48 @@ post '/adventure/:id/action/:action_id' do
 
   session[:last_result] = action['result']
   redirect "/adventure/#{adventure_id}"
+end
+
+# ────────────────────────────────────────
+# Admin: hantera användare
+# Alla routes skyddas av before '/admin*'-filtret.
+# ────────────────────────────────────────
+
+# Visar adminpanelen med en lista över alla registrerade användare.
+# Åtkomst kräver adminbehörighet (hanteras av before '/admin*'-filtret).
+#
+# @return [String] renderad HTML via Slim-mallen :'admin/users'
+get '/admin/users' do
+  @users = User.all
+  slim :'admin/users'
+end
+
+# Togglar adminbehörighet för en given användare.
+# En admin kan inte ändra sina egna rättigheter.
+# Returnerar 404 om den angivna användaren inte hittas.
+# Åtkomst kräver adminbehörighet (hanteras av before '/admin*'-filtret).
+#
+# @param id [String] route-parameter – målanvändarens databas-id
+# @return [void]
+post '/admin/users/:id/toggle_admin' do
+  target_id = params[:id].to_i
+  redirect('/admin/users?error=Kan+inte+ändra+egna+rättigheter') if target_id == session[:user_id]
+  target = User.find(target_id)
+  halt 404, "Användaren hittades inte" unless target
+  User.set_admin(target_id, target['is_admin'] == 0)
+  redirect '/admin/users'
+end
+
+# Raderar en användare permanent.
+# Alla kopplade spelomgångar, inventory och loggar tas bort via ON DELETE CASCADE.
+# En admin kan inte radera sitt eget konto via denna route.
+# Åtkomst kräver adminbehörighet (hanteras av before '/admin*'-filtret).
+#
+# @param id [String] route-parameter – målanvändarens databas-id
+# @return [void]
+post '/admin/users/:id/delete' do
+  target_id = params[:id].to_i
+  redirect('/admin/users?error=Kan+inte+radera+sig+själv') if target_id == session[:user_id]
+  User.delete(target_id)
+  redirect '/admin/users'
 end
